@@ -3,17 +3,24 @@ use std::{
     sync::Arc,
 };
 
-use dashmap::DashSet;
 use data::{EnvConfig, SharedData};
 use dotenvy::dotenv;
-use poem::{get, listener::TcpListener, middleware::Cors, EndpointExt, Route};
+use poem::{
+    get,
+    listener::TcpListener,
+    session::{CookieConfig, MemoryStorage, ServerSession},
+    EndpointExt, Route,
+};
 use poem_openapi::OpenApiService;
 use routes::hello_world::HelloWorldEndpoint;
-use serde::Deserialize;
-use sqlx::{postgres::PgPoolOptions, PgPool};
+
+use sqlx::postgres::PgPoolOptions;
+
+use crate::routes::*;
 
 mod data;
 mod errors;
+mod models;
 mod routes;
 
 #[tokio::main]
@@ -45,35 +52,38 @@ async fn main() {
     //     .await
     //     .expect("Failed to set up migrations");
 
-    let data = SharedData {
-        pool,
-        oauth2_states: DashSet::default(),
-        env_config: Arc::new(env_config),
-        reqwest: reqwest::Client::builder().use_rustls_tls().build().expect("Could not build reqwest client")
-    };
-
-    let all_endpoints = (HelloWorldEndpoint);
+    let all_endpoints = HelloWorldEndpoint;
 
     let api_service = OpenApiService::new(all_endpoints, "Loan Broker API", "1.0")
-        .server("http://localhost:8080/api");
+        .server(&env_config.website_url)
+        .description("THe API for interacting with the ");
+
+    let data = SharedData {
+        pool,
+        oauth2_states: Arc::default(),
+        env_config: Arc::new(env_config),
+        reqwest: reqwest::Client::builder()
+            .use_rustls_tls()
+            .build()
+            .expect("Could not build reqwest client"),
+    };
+
     let ui = api_service.swagger_ui();
     let app = Route::new()
-        .nest("/api", api_service.data(data.clone()).with(Cors::new()))
+        .nest("/api", api_service)
+        .at("/api/login", get(oauth2::login).data(data.clone()))
+        .at("/api/callback", get(oauth2::callback).data(data.clone()))
         .at(
-            "/api/login",
-            get(crate::routes::oauth2::login)
-                .data(data.clone())
-                .with(Cors::new()),
+            "/api/key/reset",
+            get(api_key::reset_api_key).data(data.clone()),
         )
-        .at(
-            "/api/callback",
-            get(crate::routes::oauth2::callback)
-                .data(data.clone())
-                .with(Cors::new()),
-        )
-        .nest("/api/swagger", ui);
+        .nest("/api/swagger", ui)
+        .with(ServerSession::new(
+            CookieConfig::default(),
+            MemoryStorage::new(),
+        ));
 
-    poem::Server::new(TcpListener::bind("0.0.0.0:3005"))
+    poem::Server::new(TcpListener::bind("0.0.0.0:3010"))
         .run(app)
         .await
         .unwrap();

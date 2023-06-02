@@ -1,7 +1,4 @@
-use poem::web::Data;
 use poem_openapi::{payload::PlainText, OpenApi};
-
-use crate::data::SharedData;
 
 pub struct HelloWorldEndpoint;
 
@@ -9,7 +6,7 @@ pub struct HelloWorldEndpoint;
 impl HelloWorldEndpoint {
     /// Hello world
     #[oai(path = "/", method = "get")]
-    async fn index(&self, data: Data<&SharedData>) -> PlainText<&'static str> {
-        PlainText("Hello World")
+    async fn index(&self) -> PlainText<&'static str> {
+        PlainText("Hello World!")
     }
 }

@@ -6,21 +6,26 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-poem = "1.3.55"
-poem-openapi = { version = "2.0.26", features = ["swagger-ui"] }
+envy = "0.4.2"
 dotenvy = "0.15.7"
-futures-util = "0.3.28"
-once_cell = "1.17.2"
-serde = { version = "1.0.163", features = ["derive"] }
-thiserror = "1.0.40"
-tokio = { version = "1.28.2", features = ["full"] }
 tracing = "0.1.37"
 tracing-subscriber = { version = "0.3.17", features = ["env-filter"] }
-envy = "0.4.2"
+futures-util = "0.3.28"
+tokio = { version = "1.28.2", features = ["full"] }
+poem = { version = "1.3.55", features = ["session"] }
+poem-openapi = { version = "2.0.26", features = ["swagger-ui"] }
+serde = { version = "1.0.163", features = ["derive"] }
+serde_repr = "0.1.12"
+thiserror = "1.0.40"
 dashmap = "5.4.0"
 rand = "0.8.5"
-uuid = { version = "1.3.3", features = ["serde"] }
-reqwest = { version = "0.11.18", default-features = false, features = ["serde_json", "rustls-tls-webpki-roots"] }
+uuid = { version = "1.3.3", features = ["serde", "v4"] }
+sha2 = "0.10.6"
+
+[dependencies.reqwest]
+version = "0.11.18"
+default-features = false
+features = ["json", "rustls-tls-webpki-roots"]
 
 [dependencies.sqlx]
 version = "0.6.3"

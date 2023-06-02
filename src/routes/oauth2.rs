@@ -1,14 +1,19 @@
 use poem::{
     handler,
-    web::{Data, Path, Redirect, Query}, IntoResponse, http::StatusCode,
-    error::ResponseError
+    http::StatusCode,
+    session::Session,
+    web::{Data, Query, Redirect},
 };
-use poem_openapi::{payload::{Response, PlainText}, OpenApi};
 use rand::Rng;
+use reqwest::Method;
 use serde::Deserialize;
 use uuid::Uuid;
 
-use crate::{EnvConfig, SharedData, errors};
+use crate::{
+    errors::{Error, Result},
+    models::RequestTokenResponse,
+    EnvConfig, SharedData,
+};
 
 #[handler]
 pub async fn login(Data(data): Data<&SharedData>) -> Redirect {
@@ -25,21 +30,29 @@ pub async fn login(Data(data): Data<&SharedData>) -> Redirect {
         while !data.oauth2_states.insert(state) {
             state = rng.gen();
         }
-
+        data.oauth2_states.len();
         state
     };
 
     let redirect = format!("https://spookvooper.com/oauth/authorize?response_type=code&state={state}&client_id={oauth2_client_id}&redirect_uri={website_url}/api/callback&scope=view,eco");
-    Redirect::moved_permanent(redirect)
+    Redirect::see_other(redirect)
 }
 
 #[handler]
 pub async fn callback(
     Data(data): Data<&SharedData>,
-    Query(Callback { code, state, entityid }): Query<Callback>
-) -> Result<Redirect, CallBackError> {
+    Query(Callback {
+        code,
+        state,
+        entityid,
+    }): Query<Callback>,
+    session: &Session,
+) -> Result<Redirect> {
     if data.oauth2_states.remove(&state).is_none() {
-        return Err(CallBackError::InvalidState);
+        return Err(Error::Custom(
+            StatusCode::UNAUTHORIZED,
+            "Provided state could not be found",
+        ));
     }
 
     let EnvConfig {
@@ -49,43 +62,49 @@ pub async fn callback(
         ..
     } = data.env_config.as_ref();
 
+    let response: RequestTokenResponse = data
+        .reqwest
+        .request(Method::GET, "https://spookvooper.com/OAuth/RequestToken")
+        .query(&[("grant_type", "authorization_code")])
+        .query(&[("redirect_uri", data.env_config.oauth2_redirect_uri())])
+        .query(&[("code", code)])
+        .query(&[("client_id", oauth2_client_id)])
+        .query(&[("client_secret", oauth2_client_secret)])
+        .send()
+        .await?
+        .json()
+        .await?;
 
-    dbg!(data);
-    dbg!(code);
-    dbg!(state);
-    dbg!(entityid);
+    assert_eq!(response.entityid, entityid);
 
-    Ok(Redirect::moved_permanent(&data.env_config.website_url))
-}
+    let mut trans = data.pool.begin().await.map_err(Error::Database)?;
 
-#[derive(thiserror::Error, Debug)]
-pub enum CallBackError {
-    #[error("State could not be found in all the current Oauth2 states")]
-    InvalidState,
-    #[error(transparent)]
-    Other(#[from] crate::errors::Error),
-}
+    sqlx::query!(
+        "INSERT INTO account VALUES ($1) ON CONFLICT (id) DO NOTHING",
+        response.userid
+    )
+    .execute(&mut trans)
+    .await?;
 
-impl ResponseError for CallBackError {
-    fn status(&self) -> StatusCode {
-        match self {
-            Self::InvalidState => StatusCode::UNAUTHORIZED,
-            Self::Other(x) => x.status(),
-        }
-    }
+    sqlx::query!("INSERT INTO entity VALUES ($1,$2,$3,$4) ON CONFLICT (id,holder_id) DO UPDATE SET access_token = EXCLUDED.access_token",
+        response.entityid,
+        response.userid,
+        response.entity_type as i16,
+        response.access_token
+    )
+    .execute(&mut trans)
+    .await?;
 
-    fn as_response(&self) -> poem::Response
-    {
-        match self {
-            Self::InvalidState => (self.status(), "Provided state could not be found").into_response(),
-            Self::Other(x) => x.as_response(),
-        }
-    }
+    trans.commit().await?;
+
+    session.set("svid", response.userid);
+
+    Ok(Redirect::see_other(website_url))
 }
 
 #[derive(Deserialize)]
 pub struct Callback {
     code: Uuid,
     state: u32,
-    entityid: i64
+    entityid: i64,
 }
